@@ -27,6 +27,11 @@ await app.register(fastifyStatic, {
   index: ["index.html"],
 });
 
+// Rota explícita para a SPA na raiz, útil especialmente em ambientes de deploy.
+app.get("/", (_request, reply) => {
+  return reply.sendFile("index.html");
+});
+
 app.get("/health", async () => {
   return { status: "ok" };
 });
