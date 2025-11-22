@@ -235,6 +235,10 @@ function App() {
       <header className="app-header">
         <h1>Ephemeral Downloader</h1>
         <p>Proxy de download efêmero com streaming direto da origem para você.</p>
+        <div className="app-header-meta">
+          <span>Use a rota e peering da sua VPS a seu favor.</span>
+          <span>Ideal para ROMs, ISOs e arquivos grandes.</span>
+        </div>
       </header>
 
       <main className="app-main">
@@ -263,9 +267,17 @@ function App() {
           </button>
         </form>
 
-        {downloads.length > 0 && (
-          <section className="downloads-section" aria-label="Progresso dos downloads">
-            <h2 className="downloads-title">Downloads recentes</h2>
+        <section className="downloads-section" aria-label="Progresso dos downloads">
+          <h2 className="downloads-title">Downloads recentes</h2>
+
+          {downloads.length === 0 ? (
+            <p className="downloads-empty">
+              Nenhum download ativo ainda. Cole um ou mais links diretos ao lado e clique em
+              &nbsp;
+              <strong>Iniciar download</strong>
+              &nbsp;para começar.
+            </p>
+          ) : (
             <ul className="downloads-list">
               {downloads.map((item) => (
                 <li key={item.id} className="download-item">
@@ -325,8 +337,8 @@ function App() {
                 </li>
               ))}
             </ul>
-          </section>
-        )}
+          )}
+        </section>
       </main>
     </div>
   );

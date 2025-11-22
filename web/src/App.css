@@ -3,8 +3,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 3rem 1.5rem;
-  gap: 2rem;
+  justify-content: center;
+  padding: 2.5rem 1.5rem 3rem;
+  gap: 2.5rem;
   background: radial-gradient(circle at top, #27272a 0, #09090b 45%, #020617 100%);
 }
 
@@ -21,6 +22,16 @@
 .app-header p {
   font-size: 0.98rem;
   color: #e4e4e7;
+}
+
+.app-header-meta {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: #a1a1aa;
 }
 
 .app-main {
@@ -113,7 +124,7 @@
 .downloads-section {
   width: 100%;
   max-width: 620px;
-  margin-top: 2rem;
+  margin-top: 0;
   padding: 1.25rem 1.5rem;
   border-radius: 1rem;
   border: 1px solid rgba(63, 63, 70, 0.9);
@@ -124,6 +135,12 @@
 .downloads-title {
   font-size: 1rem;
   margin-bottom: 0.5rem;
+}
+
+.downloads-empty {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #a1a1aa;
 }
 
 .downloads-list {
