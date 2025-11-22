@@ -1,0 +1,19 @@
+{
+  "name": "ephemeral-downloader-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo para aplicação de transferência efêmera de arquivos (streaming proxy) com Fastify e React.",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:server": "pnpm --filter server dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter server start"
+  },
+  "workspaces": [
+    "server",
+    "web"
+  ]
+}
+
+
