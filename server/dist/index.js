@@ -1,14 +1,29 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { request } from "undici";
-import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 const app = Fastify({
     logger: true,
 });
 // Registro de CORS básico para permitir o frontend em desenvolvimento/produção.
 await app.register(cors, {
     origin: true,
+});
+// Servir frontend buildado (Vite) em produção, similar ao Next.js.
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = dirname(currentFile);
+const clientDistPath = resolve(currentDir, "../../web/dist");
+await app.register(fastifyStatic, {
+    root: clientDistPath,
+    prefix: "/",
+    index: ["index.html"],
+});
+// Rota explícita para a SPA na raiz, útil especialmente em ambientes de deploy.
+app.get("/", (_request, reply) => {
+    return reply.sendFile("index.html");
 });
 app.get("/health", async () => {
     return { status: "ok" };
@@ -21,6 +36,12 @@ const streamQuerySchema = z.object({
         // Evita SSRF localizando apenas http/https genérico.
         return value.startsWith("http://") || value.startsWith("https://");
     }, { message: "Apenas URLs HTTP/HTTPS são permitidas." }),
+    // Offset opcional em bytes para retomar download dentro da mesma sessão.
+    offset: z
+        .string()
+        .regex(/^\d+$/)
+        .transform((value) => Number.parseInt(value, 10))
+        .optional(),
 });
 app.get("/stream", async (requestFastify, reply) => {
     const parseResult = streamQuerySchema.safeParse(requestFastify.query);
@@ -29,7 +50,7 @@ app.get("/stream", async (requestFastify, reply) => {
         reply.status(400);
         return { error: firstError };
     }
-    const { url } = parseResult.data;
+    const { url, offset } = parseResult.data;
     try {
         // HEAD para validar link e obter metadados.
         const headResponse = await request(url, {
@@ -64,9 +85,14 @@ app.get("/stream", async (requestFastify, reply) => {
             }
             return fallbackName;
         })();
-        // GET streaming da origem.
+        const headers = {};
+        if (typeof offset === "number" && Number.isFinite(offset) && offset > 0) {
+            headers.Range = `bytes=${offset}-`;
+        }
+        // GET streaming da origem (possivelmente com Range para retomada).
         const originResponse = await request(url, {
             method: "GET",
+            headers,
             headersTimeout: 30000,
             maxRedirections: 3,
         });
@@ -78,35 +104,40 @@ app.get("/stream", async (requestFastify, reply) => {
             reply.status(originResponse.statusCode);
             return { error: "Falha ao obter o arquivo de origem." };
         }
+        const normalizedLength = Array.isArray(contentLength)
+            ? contentLength[0]
+            : contentLength;
         // Configura headers de resposta para o cliente final.
         reply.headers({
             "Content-Type": Array.isArray(contentType) ? contentType[0] : contentType,
-            ...(contentLength
+            ...(normalizedLength
                 ? {
-                    "Content-Length": Array.isArray(contentLength)
-                        ? contentLength[0]
-                        : contentLength,
+                    "Content-Length": normalizedLength,
+                    "X-Origin-Content-Length": normalizedLength,
                 }
                 : {}),
             "Content-Disposition": `attachment; filename="${filename}"`,
         });
-        // Se o cliente fechar a conexão, garantimos o encerramento do stream de origem.
-        reply.raw.on("close", () => {
-            originResponse.body?.destroy();
-        });
-        // Conecta o stream de origem diretamente ao socket do cliente.
-        await pipeline(originResponse.body, reply.raw);
-        // Fastify exige que retornemos void quando manipulamos reply.raw diretamente.
-        return reply;
+        // Entregamos o stream diretamente para o Fastify gerenciar (pipe + backpressure).
+        return reply.send(originResponse.body);
     }
     catch (error) {
         requestFastify.log.error({ err: error, url }, "Erro durante o streaming do arquivo");
         if (!reply.sent) {
-            reply.status(502);
-            return { error: "Erro ao realizar o proxy do arquivo." };
+            // Em caso de falha antes de iniciar o streaming, respondemos com JSON.
+            return reply
+                .status(502)
+                .send({ error: "Erro ao realizar o proxy do arquivo." });
         }
-        return reply;
+        // Se a resposta já foi enviada/fechada, apenas não fazemos mais nada.
     }
+});
+// Fallback para SPA: qualquer rota GET não atendida cai no index.html.
+app.setNotFoundHandler((requestFastify, reply) => {
+    if (requestFastify.method === "GET") {
+        return reply.sendFile("index.html");
+    }
+    reply.status(404).send({ error: "Recurso não encontrado." });
 });
 const port = Number(process.env.PORT) || 3000;
 try {
