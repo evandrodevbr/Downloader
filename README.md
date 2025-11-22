@@ -14,19 +14,20 @@ Simples, focado e pensado para quem vive baixando ISOs, ROMs e arquivos grandes.
 
 ## Como funciona (visão rápida)
 
-- **Frontend (React + Vite)**  
-  - Interface SPA com campo de texto para múltiplos links (um por linha).  
+- **Frontend (React + Vite)**
+
+  - Interface SPA com campo de texto para múltiplos links (um por linha).
   - Lista de downloads recentes com:
     - Progresso em tempo real.
     - Tamanho total e já baixado.
     - Velocidade em **MB/s** e **Mbps**.
     - Botão para **retomar downloads** que falharam dentro da mesma sessão.
 
-- **Backend (Fastify + Streams)**  
+- **Backend (Fastify + Streams)**
   - Rota `GET /stream?url=...&offset=...` que:
-    - Faz `HEAD` na origem para validar o link e obter `Content-Length`.  
-    - Faz `GET` (ou `Range: bytes=offset-` para retomada).  
-    - Faz o **streaming direto** para o cliente, sem guardar arquivo em disco.  
+    - Faz `HEAD` na origem para validar o link e obter `Content-Length`.
+    - Faz `GET` (ou `Range: bytes=offset-` para retomada).
+    - Faz o **streaming direto** para o cliente, sem guardar arquivo em disco.
   - Em produção, também serve o build do frontend (Vite) na própria porta do servidor.
 
 ---
@@ -126,7 +127,7 @@ VITE_API_URL=http://seu-backend:3000
 
 ## Limitações intencionais
 
-- **Retomada entre sessões** (fechar aba / desligar máquina) **não é suportada**.  
+- **Retomada entre sessões** (fechar aba / desligar máquina) **não é suportada**.
   - O projeto é focado em uso efêmero, sem manter arquivos em disco no servidor.
 - O servidor realiza apenas:
   - Validação básica de URL (somente `http`/`https`).
@@ -145,10 +146,8 @@ VITE_API_URL=http://seu-backend:3000
 
 ## Por que esse projeto existe?
 
-Porque às vezes o problema não é a sua internet nem o servidor de origem, e sim o **caminho entre eles**.  
+Porque às vezes o problema não é a sua internet nem o servidor de origem, e sim o **caminho entre eles**.
 
-Colocando uma VPS no meio do caminho, você “puxa” o arquivo por uma rota melhor até a VPS e, de lá, faz o streaming até você com muito mais previsibilidade.  
+Colocando uma VPS no meio do caminho, você “puxa” o arquivo por uma rota melhor até a VPS e, de lá, faz o streaming até você com muito mais previsibilidade.
 
 O Ephemeral Downloader encapsula essa ideia em uma interface simples, focada em quem só quer **colar o link, apertar um botão e acompanhar o progresso**.
-
-
