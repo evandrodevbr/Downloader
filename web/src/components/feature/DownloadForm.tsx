@@ -1,75 +1,54 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
-import { Download } from "lucide-react";
 import { Button } from "../ui/Button";
-import { Textarea } from "../ui/Textarea";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/Card";
+import { Input } from "../ui/Input";
+import { Download } from "lucide-react";
+import { z } from "zod";
+
+const formSchema = z.object({
+    url: z.string().url("Please enter a valid URL"),
+});
 
 interface DownloadFormProps {
-    onSubmit: (urls: string[]) => void;
+    onDownload: (url: string) => void;
 }
 
-export function DownloadForm({ onSubmit }: DownloadFormProps) {
-    const [text, setText] = useState("");
+export function DownloadForm({ onDownload }: DownloadFormProps) {
+    const [url, setUrl] = useState("");
     const [error, setError] = useState<string | null>(null);
 
-    const handleSubmit = (e: FormEvent) => {
+    const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
 
-        const urls = text
-            .split(/\r?\n/)
-            .map((u) => u.trim())
-            .filter(Boolean);
+        const result = formSchema.safeParse({ url });
 
-        if (urls.length === 0) {
-            setError("Please enter at least one URL.");
+        if (!result.success) {
+            setError(result.error.errors[0].message);
             return;
         }
 
-        const invalidUrl = urls.find((u) => {
-            try {
-                new URL(u);
-                return false;
-            } catch {
-                return true;
-            }
-        });
-
-        if (invalidUrl) {
-            setError(`Invalid URL detected: ${invalidUrl}`);
-            return;
-        }
-
-        onSubmit(urls);
-        setText("");
+        onDownload(url);
+        setUrl("");
     };
 
     return (
-        <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-                <CardTitle>New Download</CardTitle>
-                <CardDescription>
-                    Enter direct links (HTTP/HTTPS) to stream via VPS. One URL per line.
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <Textarea
-                        placeholder="https://example.com/file.iso"
-                        className="min-h-[120px] font-mono text-sm"
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
+        <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
+            <div className="flex w-full items-start gap-2">
+                <div className="flex-1 space-y-1">
+                    <Input
+                        type="url"
+                        placeholder="https://example.com/file.zip"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        className={error ? "border-destructive focus-visible:ring-destructive" : ""}
                     />
-                    {error && <p className="text-sm text-destructive">{error}</p>}
-                    <div className="flex justify-end">
-                        <Button type="submit" className="w-full sm:w-auto">
-                            <Download className="mr-2 size-4" />
-                            Start Download
-                        </Button>
-                    </div>
-                </form>
-            </CardContent>
-        </Card>
+                    {error && <p className="text-xs text-destructive">{error}</p>}
+                </div>
+                <Button type="submit">
+                    <Download className="mr-2 h-4 w-4" />
+                    Download
+                </Button>
+            </div>
+        </form>
     );
 }

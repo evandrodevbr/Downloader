@@ -1,10 +1,12 @@
-import Fastify from "fastify";
+import Fastify, { FastifyRequest, FastifyReply } from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { Agent, setGlobalDispatcher, request } from "undici";
+import { Agent, setGlobalDispatcher } from "undici";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { sessionManager } from "./lib/SessionManager";
+import { DownloadManager } from "./lib/DownloadManager";
 
 // Otimização: Agente HTTP global com conexões persistentes e timeout relaxado.
 // Isso ajuda a manter a performance em downloads paralelos e evita gargalos de socket.
@@ -59,110 +61,76 @@ const streamQuerySchema = z.object({
     .optional(),
 });
 
-app.get("/stream", async (requestFastify, reply) => {
-  const parseResult = streamQuerySchema.safeParse(requestFastify.query);
+const downloadManager = new DownloadManager(agent);
 
-  if (!parseResult.success) {
-    const firstError = parseResult.error.errors[0]?.message ?? "Parâmetros inválidos";
-    reply.status(400);
-    return { error: firstError };
-  }
+// Helper to get session from header
+const getSession = (req: FastifyRequest, reply: FastifyReply) => {
+  const authHeader = req.headers["x-session-id"];
+  const id = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+  const session = sessionManager.getSession(id);
 
-  const { url, offset } = parseResult.data;
+  // Return the ID for the client to store if it's new
+  reply.header("x-session-id", session.id);
+  return session;
+};
+
+// 1. Session Status & Timer
+app.get("/api/session", async (request, reply) => {
+  const session = getSession(request, reply);
+  return {
+    sessionId: session.id,
+    expiresAt: sessionManager.getExpiresAt(session.id),
+    remainingMs: sessionManager.getSessionTimeRemaining(session.id),
+  };
+});
+
+// 2. Queue Download
+const queueSchema = z.object({
+  url: z.string().url(),
+});
+
+app.post("/api/queue", async (request, reply) => {
+  const session = getSession(request, reply);
+
+  const parse = queueSchema.safeParse(request.body);
+  if (!parse.success) return reply.status(400).send({ error: "Invalid URL" });
+
+  const task = await downloadManager.queueDownload(session.id, parse.data.url);
+  return task;
+});
+
+// 3. List Tasks (Polling)
+app.get("/api/tasks", async (request, reply) => {
+  const session = getSession(request, reply);
+  const tasks = downloadManager.getTasks(session.id);
+  return tasks;
+});
+
+// 4. Download Completed File (Local -> User)
+app.get("/api/download/:taskId", async (request, reply) => {
+  const session = getSession(request, reply);
+  const { taskId } = request.params as { taskId: string };
+
+  const task = downloadManager.getTask(taskId);
+
+  if (!task) return reply.status(404).send({ error: "Task not found" });
+  if (task.sessionId !== session.id) return reply.status(403).send({ error: "Unauthorized" });
+  if (task.status !== "completed") return reply.status(400).send({ error: "Download not ready" });
+
+  const sessionPath = sessionManager.getSessionPath(session.id);
+  const filePath = resolve(sessionPath, `${task.id}_${task.filename}`);
 
   try {
-    // HEAD para validar link e obter metadados.
-    const headResponse = await request(url, {
-      method: "HEAD",
-      headersTimeout: 15000,
-      headers: {
-        "User-Agent": "Ephemeral-Downloader/1.0",
-      },
-      dispatcher: agent,
-    });
-
-    if (headResponse.statusCode && headResponse.statusCode >= 400) {
-      reply.status(502);
-      return { error: `Erro na origem: ${headResponse.statusCode}` };
-    }
-
-    const contentType =
-      headResponse.headers["content-type"] ?? "application/octet-stream";
-    const contentLength = headResponse.headers["content-length"];
-    const originDisposition = headResponse.headers["content-disposition"];
-
-    // Nome de arquivo fallback.
-    const fallbackName = (() => {
-      try {
-        const parsedUrl = new URL(url);
-        const nameFromPath = parsedUrl.pathname.split("/").filter(Boolean).pop();
-        return nameFromPath ?? "download.bin";
-      } catch {
-        return "download.bin";
-      }
-    })();
-
-    const filename = (() => {
-      if (typeof originDisposition === "string") {
-        const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(originDisposition);
-        if (match?.[1]) {
-          return decodeURIComponent(match[1].replace(/"/g, ""));
-        }
-      }
-      return fallbackName;
-    })();
-
-    const headers: Record<string, string> = {
-      "User-Agent": "Ephemeral-Downloader/1.0",
-    };
-
-    if (typeof offset === "number" && Number.isFinite(offset) && offset > 0) {
-      headers.Range = `bytes=${offset}-`;
-    }
-
-    // GET streaming da origem.
-    const originResponse = await request(url, {
-      method: "GET",
-      headers,
-      headersTimeout: 30000,
-      maxRedirections: 5,
-      dispatcher: agent,
-    });
-
-    if (!originResponse.body) {
-      reply.status(502);
-      return { error: "Sem corpo de resposta na origem." };
-    }
-
-    if (originResponse.statusCode && originResponse.statusCode >= 400) {
-      reply.status(originResponse.statusCode);
-      return { error: "Falha ao baixar arquivo da origem." };
-    }
-
-    const normalizedLength = Array.isArray(contentLength)
-      ? contentLength[0]
-      : contentLength;
-
-    // Configura headers de resposta.
-    reply.headers({
-      "Content-Type": Array.isArray(contentType) ? contentType[0] : contentType,
-      ...(normalizedLength
-        ? {
-          "Content-Length": normalizedLength,
-          "X-Origin-Content-Length": normalizedLength,
-        }
-        : {}),
-      "Content-Disposition": `attachment; filename="${filename}"`,
-    });
-
-    // Pipe direto.
-    return reply.send(originResponse.body);
-  } catch (error) {
-    requestFastify.log.error({ err: error, url }, "Erro no proxy");
-    if (!reply.sent) {
-      return reply.status(502).send({ error: "Erro interno no proxy." });
-    }
+    sessionManager.touch(session.id); // Reset timer on interaction
+    return reply.download(filePath, task.filename); // requires @fastify/static or sendFile
+  } catch (e) {
+    return reply.status(404).send({ error: "File removed or missing" });
   }
+});
+
+// Legacy Stream (Redirect or Deprecate)
+app.get("/stream", async (req, reply) => {
+  reply.status(410).send({ error: "Direct streaming is deprecated. Use the new Dashboard." });
 });
 
 // Fallback para SPA.
