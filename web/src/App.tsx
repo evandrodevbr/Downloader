@@ -1,47 +1,13 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
-import "./App.css";
+import { Layout } from "./components/ui/Layout";
+import { DownloadForm } from "./components/feature/DownloadForm";
+import { DownloadItem, type DownloadItemData } from "./components/feature/DownloadItem";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/Card";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
-type DownloadStatus = "pending" | "downloading" | "completed" | "error";
-
-type DownloadItem = {
-  id: number;
-  url: string;
-  status: DownloadStatus;
-  progress: number | null;
-  receivedBytes?: number;
-  totalBytes?: number;
-  speedBytesPerSecond?: number;
-  error?: string;
-};
-
-const formatBytes = (bytes: number | undefined): string => {
-  if (!bytes || !Number.isFinite(bytes)) return "-";
-  const units = ["B", "KB", "MB", "GB", "TB"] as const;
-  let value = bytes;
-  let unitIndex = 0;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value.toFixed(1)} ${units[unitIndex]}`;
-};
-
-const formatSpeed = (bytesPerSecond: number | undefined): string => {
-  if (!bytesPerSecond || !Number.isFinite(bytesPerSecond)) return "- / -";
-  const mbPerSecond = bytesPerSecond / (1024 * 1024);
-  const mbitPerSecond = (bytesPerSecond * 8) / 1_000_000;
-  return `${mbPerSecond.toFixed(2)} MB/s · ${mbitPerSecond.toFixed(2)} Mbps`;
-};
-
 function App() {
-  const [urlsText, setUrlsText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [downloads, setDownloads] = useState<DownloadItemData[]>([]);
 
   const startDownload = async (itemId: number, url: string, resume = false) => {
     const existing = downloads.find((item) => item.id === itemId);
@@ -53,11 +19,12 @@ function App() {
       current.map((item) =>
         item.id === itemId
           ? {
-              ...item,
-              status: "downloading",
-              progress: item.progress ?? 0,
-              error: undefined,
-            }
+            ...item,
+            status: "downloading",
+            progress: item.progress ?? 0,
+            error: undefined,
+            speedHistory: [], // Reset history on start/resume
+          }
           : item,
       ),
     );
@@ -75,7 +42,7 @@ function App() {
       );
 
       if (!response.ok || !response.body) {
-        const message = "Falha ao iniciar o download.";
+        const message = "Failed to start download.";
         setDownloads((current) =>
           current.map((item) =>
             item.id === itemId
@@ -99,8 +66,6 @@ function App() {
       let received = alreadyReceived;
       const startedAt = performance.now();
 
-      // Atualiza progresso incrementalmente conforme os bytes chegam.
-      // Para manter o código claro, usamos um loop while padrão.
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
@@ -115,17 +80,22 @@ function App() {
             totalBytes > 0 ? Math.round((received / totalBytes) * 100) : null;
 
           setDownloads((current) =>
-            current.map((item) =>
-              item.id === itemId
-                ? {
-                    ...item,
-                    progress: percentage,
-                    receivedBytes: received,
-                    totalBytes: totalBytes || item.totalBytes,
-                    speedBytesPerSecond: bytesPerSecond,
-                  }
-                : item,
-            ),
+            current.map((item) => {
+              if (item.id !== itemId) return item;
+
+              const newHistory = [...(item.speedHistory || []), bytesPerSecond];
+              // Keep last 50 data points for the graph
+              if (newHistory.length > 50) newHistory.shift();
+
+              return {
+                ...item,
+                progress: percentage,
+                receivedBytes: received,
+                totalBytes: totalBytes || item.totalBytes,
+                speedBytesPerSecond: bytesPerSecond,
+                speedHistory: newHistory,
+              };
+            }),
           );
         }
       }
@@ -134,7 +104,6 @@ function App() {
         response.headers.get("content-type") ?? "application/octet-stream";
       const blob = new Blob(chunks, { type: contentType });
 
-      // Resolve nome do arquivo pelo header Content-Disposition ou pela URL.
       const disposition = response.headers.get("content-disposition");
       const fallbackName = (() => {
         try {
@@ -175,7 +144,7 @@ function App() {
       );
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Erro inesperado durante o download.";
+        err instanceof Error ? err.message : "Unexpected error during download.";
       setDownloads((current) =>
         current.map((item) =>
           item.id === itemId
@@ -186,41 +155,14 @@ function App() {
     }
   };
 
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    setError(null);
-
-    const urls = urlsText
-      .split(/\r?\n/)
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    if (urls.length === 0) {
-      setError("Informe ao menos uma URL de download direto (uma por linha).");
-      return;
-    }
-
-    const invalidUrl = urls.find((value) => {
-      try {
-        // eslint-disable-next-line no-new
-        new URL(value);
-        return false;
-      } catch {
-        return true;
-      }
-    });
-
-    if (invalidUrl) {
-      setError(`URL inválida detectada: ${invalidUrl}`);
-      return;
-    }
-
+  const handleNewDownloads = (urls: string[]) => {
     const baseId = Date.now();
-    const newItems: DownloadItem[] = urls.map((value, index) => ({
+    const newItems: DownloadItemData[] = urls.map((value, index) => ({
       id: baseId + index,
       url: value,
       status: "pending",
       progress: 0,
+      speedHistory: [],
     }));
 
     setDownloads((current) => [...newItems, ...current]);
@@ -230,117 +172,58 @@ function App() {
     });
   };
 
+  const handleRetry = (id: number, url: string) => {
+    void startDownload(id, url, true);
+  };
+
   return (
-    <div className="app-root">
-      <header className="app-header">
-        <h1>Ephemeral Downloader</h1>
-        <p>Proxy de download efêmero com streaming direto da origem para você.</p>
-        <div className="app-header-meta">
-          <span>Use a rota e peering da sua VPS a seu favor.</span>
-          <span>Ideal para ROMs, ISOs e arquivos grandes.</span>
+    <Layout>
+      <div className="grid gap-8 lg:grid-cols-[400px_1fr]">
+        <div className="space-y-6">
+          <DownloadForm onSubmit={handleNewDownloads} />
+
+          <Card className="border-border/50 bg-card/50 backdrop-blur-sm hidden lg:block">
+            <CardHeader>
+              <CardTitle className="text-lg">Tips</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground space-y-2">
+              <p>• Use direct links ending in .iso, .zip, .mp4, etc.</p>
+              <p>• Downloads are streamed directly to your browser memory, then saved.</p>
+              <p>• If the tab closes, the download is lost.</p>
+            </CardContent>
+          </Card>
         </div>
-      </header>
 
-      <main className="app-main">
-        <form className="download-form" onSubmit={handleSubmit}>
-          <label htmlFor="url-input" className="field-label">
-            Links diretos dos arquivos
-          </label>
-          <p className="field-helper">
-            Uma URL por linha. Aceita links HTTP/HTTPS diretos para arquivos.
-          </p>
-          <textarea
-            id="url-input"
-            placeholder={
-              "https://exemplo.com/arquivo-1.iso\nhttps://exemplo.com/arquivo-2.zip"
-            }
-            value={urlsText}
-            onChange={(event) => setUrlsText(event.target.value)}
-            className="url-input url-input--multiline"
-            rows={5}
-          />
+        <section className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold tracking-tight">Active Downloads</h2>
+            <span className="text-sm text-muted-foreground">{downloads.length} items</span>
+          </div>
 
-          {error && <p className="error-text">{error}</p>}
-
-          <button type="submit" className="primary-button">
-            Iniciar download
-          </button>
-        </form>
-
-        <section className="downloads-section" aria-label="Progresso dos downloads">
-          <h2 className="downloads-title">Downloads recentes</h2>
-
-          {downloads.length === 0 ? (
-            <p className="downloads-empty">
-              Nenhum download ativo ainda. Cole um ou mais links diretos ao lado e clique em
-              &nbsp;
-              <strong>Iniciar download</strong>
-              &nbsp;para começar.
-            </p>
-          ) : (
-            <ul className="downloads-list">
-              {downloads.map((item) => (
-                <li key={item.id} className="download-item">
-                  <div className="download-main">
-                    <p className="download-url" title={item.url}>
-                      {item.url}
-                    </p>
-                    <span className={`badge badge--${item.status}`}>
-                      {item.status === "pending" && "Pendente"}
-                      {item.status === "downloading" && "Baixando"}
-                      {item.status === "completed" && "Concluído"}
-                      {item.status === "error" && "Erro"}
-                    </span>
-                  </div>
-
-                  {item.progress !== null && (
-                    <div className="progress-wrapper">
-                      <div className="progress-bar">
-                        <div
-                          className="progress-bar__fill"
-                          style={{ width: `${item.progress}%` }}
-                        />
-                      </div>
-                      <span className="progress-label">
-                        {item.progress}%
-                      </span>
-                    </div>
-                  )}
-
-                  {(item.receivedBytes ?? 0) > 0 && (
-                    <p className="download-meta">
-                      <span>
-                        {formatBytes(item.receivedBytes)} /{" "}
-                        {formatBytes(item.totalBytes)}
-                      </span>
-                      <span>·</span>
-                      <span>{formatSpeed(item.speedBytesPerSecond)}</span>
-                    </p>
-                  )}
-
-                  {item.error && (
-                    <div className="download-footer">
-                      <p className="download-error">
-                        {item.error}
-                      </p>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => {
-                          void startDownload(item.id, item.url, true);
-                        }}
-                      >
-                        Retomar download
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="space-y-4">
+            {downloads.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center animate-in fade-in-50">
+                <div className="mb-4 rounded-full bg-secondary/50 p-4">
+                  <div className="i-lucide-download size-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold">No downloads yet</h3>
+                <p className="mt-2 text-sm text-muted-foreground max-w-sm">
+                  Paste your links on the left sidebar to get started. The VPS proxy will handle the connection.
+                </p>
+              </div>
+            ) : (
+              downloads.map((item) => (
+                <DownloadItem
+                  key={item.id}
+                  item={item}
+                  onRetry={handleRetry}
+                />
+              ))
+            )}
+          </div>
         </section>
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 }
 

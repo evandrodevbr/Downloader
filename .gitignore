@@ -1,1 +1,41 @@
-node_modules
+# Node.js
+node_modules/
+dist/
+build/
+coverage/
+.npm/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agent / AI
+.agent/.shared/
+.agent/logs/
+.agent/temp/
+.agent/**/__pycache__/
+.agent/**/*.pyc
+.agent/**/node_modules/
+.agent/**/.DS_Store
+.gemini/
+.antigravity/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
